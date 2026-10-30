@@ -2,3 +2,6 @@
 *.wav
 *.ogg
 __pycache__/
+progress.json
+grammar_audio/
+stage_audio/

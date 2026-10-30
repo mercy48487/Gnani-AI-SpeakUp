@@ -2,6 +2,7 @@ import json
 import hashlib
 import streamlit as st
 from main import generate_json, transcribe, speak
+from progress import add_xp, sidebar
 
 st.set_page_config(page_title="SpeakUp Hinglish", page_icon="🗣️")
 
@@ -71,6 +72,8 @@ with st.container(border=True):
             }
             st.session_state.history.append(st.session_state.result)
             st.session_state.last_hash = h
+            add_xp(10)            
+
 
         r = st.session_state.result
         if r:
@@ -90,3 +93,4 @@ if st.session_state.history:
     with st.expander(f"📜 Your sentences so far ({len(st.session_state.history)})"):
         for item in reversed(st.session_state.history):
             st.write(f"**{item['heard']}**  →  {item['english']}")
+            sidebar()

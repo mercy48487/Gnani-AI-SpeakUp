@@ -1,10 +1,12 @@
 import os
 import re
 import difflib
+import hashlib
 import streamlit as st
 from main import transcribe, speak, correct_sentence
+from progress import add_xp, sidebar
 
-st.set_page_config(page_title="SpeakUp", page_icon="🎙️")
+st.set_page_config(page_title="SpeakUp Practice", page_icon="🎯")
 
 SENTENCES = [
     "I am going to the market tomorrow morning.",
@@ -19,13 +21,17 @@ def clean(text):
     return re.sub(r"[^a-z' ]", "", text.lower()).strip()
 
 
-# ---------- Header ----------
+def clear_attempt():
+    st.session_state.pr_hash = None
+    st.session_state.pr_result = None
+
+
 st.markdown(
     """
     <div style="text-align:center; padding: 0.5rem 0 1rem 0;">
-        <h1 style="margin-bottom:0;">🎙️ SpeakUp</h1>
+        <h1 style="margin-bottom:0;">🎯 Practice</h1>
         <p style="margin-top:0; opacity:0.8;">
-            Speak English with confidence. Get feedback in Hinglish.
+            Say it. See exactly what to fix. Hear why in Hinglish.
         </p>
     </div>
     """,
@@ -35,6 +41,8 @@ st.markdown(
 if "i" not in st.session_state:
     st.session_state.i = 0
     st.session_state.tries = 0
+if "pr_hash" not in st.session_state:
+    clear_attempt()
 
 i = st.session_state.i
 
@@ -45,12 +53,12 @@ if i >= len(SENTENCES):
     if st.button("Start again"):
         st.session_state.i = 0
         st.session_state.tries = 0
+        clear_attempt()
         st.rerun()
+    sidebar()
     st.stop()
 
-# ---------- Progress ----------
 st.progress(i / len(SENTENCES), text=f"Sentence {i + 1} of {len(SENTENCES)}")
-
 target = SENTENCES[i]
 
 # ---------- Target sentence card ----------
@@ -71,47 +79,67 @@ with st.container(border=True):
     )
 
     if audio:
-        with open("recording.wav", "wb") as f:
-            f.write(audio.getvalue())
+        data = audio.getvalue()
+        h = hashlib.md5(data).hexdigest()
 
-        with st.spinner("Listening..."):
-            heard = transcribe("recording.wav")
+        # Only call the APIs once per new recording
+        if h != st.session_state.pr_hash:
+            with open("recording.wav", "wb") as f:
+                f.write(data)
 
-        heard_words = clean(heard).split()
-        target_words = clean(target).split()
-        matcher = difflib.SequenceMatcher(None, heard_words, target_words)
-        score = matcher.ratio()
+            with st.spinner("Listening..."):
+                heard = transcribe("recording.wav")
 
-        st.write(f"**You said:** {heard}")
-        st.progress(score, text=f"Match: {int(score * 100)}%")
+            heard_words = clean(heard).split()
+            target_words = clean(target).split()
+            matcher = difflib.SequenceMatcher(None, heard_words, target_words)
+            score = matcher.ratio()
 
-        mistakes = []
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-            if tag != "equal":
-                said = " ".join(heard_words[i1:i2]) or "(nothing)"
-                expected = " ".join(target_words[j1:j2]) or "(nothing)"
-                mistakes.append((said, expected))
+            mistakes = []
+            for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                if tag != "equal":
+                    said = " ".join(heard_words[i1:i2]) or "(nothing)"
+                    expected = " ".join(target_words[j1:j2]) or "(nothing)"
+                    mistakes.append((said, expected))
 
-        if not mistakes:
-            st.balloons()
-            st.success("Perfect! 🔥")
-            if st.button("Next sentence ➡️"):
-                st.session_state.i += 1
-                st.session_state.tries = 0
-                st.rerun()
-        else:
-            st.warning("Almost there! Check these parts:")
-            for said, expected in mistakes:
-                st.write(f"- You said **{said}**, try **{expected}**")
-            with st.spinner("Thinking..."):
-                tip = correct_sentence(heard, target)
-            st.info(f"💡 {tip['explanation']}")
-            if st.button("Try again 🔁"):
-                st.session_state.tries += 1
-                st.rerun()
+            tip = None
+            if mistakes:
+                with st.spinner("Thinking..."):
+                    tip = correct_sentence(heard, target)["explanation"]
+
+            add_xp(25 if not mistakes else 5)
+            st.session_state.pr_result = {
+                "heard": heard, "score": score, "mistakes": mistakes, "tip": tip,
+            }
+            st.session_state.pr_hash = h
+
+        r = st.session_state.pr_result
+        if r:
+            st.write(f"**You said:** {r['heard']}")
+            st.progress(r["score"], text=f"Match: {int(r['score'] * 100)}%")
+
+            if not r["mistakes"]:
+                st.success("Perfect! 🔥  +25 XP")
+                if st.button("Next sentence ➡️"):
+                    st.session_state.i += 1
+                    st.session_state.tries = 0
+                    clear_attempt()
+                    st.rerun()
+            else:
+                st.warning("Almost there! Check these parts:  (+5 XP for trying)")
+                for said, expected in r["mistakes"]:
+                    st.write(f"- You said **{said}**, try **{expected}**")
+                st.info(f"💡 {r['tip']}")
+                if st.button("Try again 🔁"):
+                    st.session_state.tries += 1
+                    clear_attempt()
+                    st.rerun()
 
 st.divider()
 if st.button("Skip this sentence"):
     st.session_state.i += 1
     st.session_state.tries = 0
+    clear_attempt()
     st.rerun()
+
+sidebar()
